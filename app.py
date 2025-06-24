@@ -1,4 +1,3 @@
-
 import gradio as gr
 import pandas as pd
 import plotly.graph_objects as go
@@ -55,11 +54,11 @@ def process_data(data_file, mapping_dict, date_format_code, date_format_custom):
         valid_indices = processed_df.index
         df_filtered = df.iloc[valid_indices].copy()
         
-        def clean_numeric(series): return pd.to_numeric(series.astype(str).str.replace(',', ''), errors='coerce')
+        def clean_numeric(series): return pd.to_numeric(series.astype(str).str.replace(',', '').replace('₩', ''), errors='coerce')
 
         for key, col in mapping_dict.items():
             if col:
-                if key not in ['date', 'channel', 'campaign', 'adset', 'creative']:
+                if key not in ['date', 'channel', 'campaign', 'adset']:
                     processed_df[key] = clean_numeric(df_filtered[col])
                 else: processed_df[key] = df_filtered[col].astype(str)
 
@@ -83,7 +82,7 @@ def aggregate_data(df):
             return df_agg
 
         results = {'overall': calculate_efficiency(pd.DataFrame(df.agg(agg_metrics)).T).iloc[0]}
-        for group in ['channel', 'campaign', 'adset', 'creative']:
+        for group in ['channel', 'campaign', 'adset']:
             if group in df.columns: results[f'by_{group}'] = calculate_efficiency(df.groupby(group).agg(agg_metrics).reset_index())
         results['by_week'] = calculate_efficiency(df.groupby(['month', 'week']).agg(agg_metrics).reset_index())
         results['by_week']['week_str'] = results['by_week'].apply(lambda r: f"{int(r['month'].split('-')[1])}월 {r['week']}주차", axis=1)
@@ -113,52 +112,28 @@ def create_plots(aggregated_data, kpi_type, target_value):
         print(f"Error in create_plots: {e}\n{traceback.format_exc()}"); return None, None, None
 
 def create_kpi_html(overall, kpi_type, target_cpa, target_roas, prev_month_overall):
-    def get_trend_html(current, prev, kpi_name, vs_text):
-        if prev is None or pd.isna(prev) or prev == 0: return "<div class='kpi-trend-placeholder'>- -</div>"
-        diff_pct = (current - prev) / prev * 100 if prev != 0 else 0
-        is_bad = (kpi_name in ['cpa', 'cost'] and diff_pct > 0) or (kpi_name not in ['cpa', 'cost'] and diff_pct < 0)
-        color = CHART_COLORS['danger'] if is_bad else CHART_COLORS['success']; arrow = "↗" if diff_pct > 0 else "↘"; icon = "📉" if is_bad else "📈"
-        bar_html = f"<div class='progress-container'><div class='progress-bar-bg'><div class='progress-bar-fill' style='width: {min(100, abs(diff_pct) * 1.5)}%; background: linear-gradient(90deg, {color}, {color}80);'></div></div></div>" if vs_text == "KPI 대비" else ""
-        return f"<div class='kpi-trend'><span style='color: {color}; font-weight: 600;'>{icon} {arrow} {abs(diff_pct):.1f}%</span> <div class='vs-text'>vs {vs_text}</div></div>{bar_html}"
-    def format_card(title, value, trend_html="<div class='kpi-trend-placeholder'>- -</div>", icon="📊"):
-        return f"<div class='kpi-card'><div class='kpi-header'><span class='kpi-icon'>{icon}</span><p class='kpi-title'>{title}</p></div><p class='kpi-value'>{value}</p>{trend_html}</div>"
-    cost_trend = get_trend_html(overall['cost'], prev_month_overall['cost'], 'cost', "전달 대비") if prev_month_overall is not None else ""
-    ctr_trend = get_trend_html(overall['ctr'], prev_month_overall['ctr'], 'ctr', "전달 대비") if prev_month_overall is not None else ""
-    cvr_trend = get_trend_html(overall['cvr'], prev_month_overall['cvr'], 'cvr', "전달 대비") if prev_month_overall is not None else ""
-    conv_trend = get_trend_html(overall['conversions'], prev_month_overall['conversions'], 'conversions', "전달 대비") if prev_month_overall is not None else ""
-    roas_trend = get_trend_html(overall['roas'], prev_month_overall['roas'], 'roas', "전달 대비") if prev_month_overall is not None else ""
-    cpa_trend = get_trend_html(overall['cpa'], prev_month_overall['cpa'], 'cpa', "전달 대비") if prev_month_overall is not None else ""
-    if kpi_type == 'roas': roas_trend = get_trend_html(overall['roas'], target_roas, 'roas', "KPI 대비")
-    if kpi_type == 'cpa': cpa_trend = get_trend_html(overall['cpa'], target_cpa, 'cpa', "KPI 대비")
-    cards = [format_card("총 광고비", f"₩{overall['cost']:,.0f}", cost_trend, "💰"), format_card("클릭률 (CTR)", f"{overall['ctr']:.2f}%", ctr_trend, "👆"), format_card("전환율 (CVR)", f"{overall['cvr']:.2f}%", cvr_trend, "🎯"), format_card("총 전환수", f"{overall['conversions']:,.0f}건", conv_trend, "✅"), format_card("ROAS", f"{overall['roas']:.2f}%", roas_trend, "📊"), format_card("CPA", f"₩{overall['cpa']:,.0f}", cpa_trend, "💸")]
-    return f"<div class='kpi-dashboard'><div class='kpi-grid'>{''.join(cards)}</div></div>"
-
-def create_top_performers_html(aggregated_data, top_kpi):
-    html = "<div class='top-performers-container'>"
-    for group, title, icon in [('campaign', '🥇 Top 5 캠페인', '🏆'), ('adset', '🥈 Top 5 광고세트', '🚀'), ('creative', '🥉 Top 5 소재', '🎨')]:
-        df_group = aggregated_data.get(f'by_{group}')
-        if df_group is None or df_group.empty:
-            html += f"<div class='top-performer-card'><h4 class='top-performer-title'>{icon} {title}</h4><p class='kpi-trend-placeholder'>'{group}' 컬럼을 매핑해주세요.</p></div>"
-            continue
-        
-        ascending = top_kpi == 'cpa'
-        top5 = df_group.sort_values(by=top_kpi, ascending=ascending).head(5)
-        top_value = top5.iloc[0][top_kpi]
-        
-        list_html = "<ol class='top-performer-list'>"
-        for idx, row in top5.iterrows():
-            bar_width = (row[top_kpi] / top_value * 100) if top_value > 0 else 0
-            if not ascending: bar_width = (row[top_kpi] / top_value * 100) if top_value > 0 else 0
-            else: bar_width = (top_value / row[top_kpi] * 100) if row[top_kpi] > 0 else 0
-            
-            kpi_val_str = f"{row[top_kpi]:,.0f}" if top_kpi == 'cpa' else f"{row[top_kpi]:.2f}%"
-            cost_str = f"₩{row['cost']:,.0f}"
-
-            list_html += f"<li><span class='rank'>{idx+1}</span><div class='item-details'><div class='item-header'><span class='item-name'>{row[group]}</span><span class='item-kpi'>{kpi_val_str}</span></div><div class='item-bar-bg'><div class='item-bar-fill' style='width: {bar_width}%;'></div></div><div class='item-sub-metric'>비용: {cost_str}</div></div></li>"
-        list_html += "</ol>"
-        html += f"<div class='top-performer-card'><h4 class='top-performer-title'>{icon} {title}</h4>{list_html}</div>"
-    html += "</div>"
-    return html
+    try:
+        def get_trend_html(current, prev, kpi_name, vs_text):
+            if prev is None or pd.isna(prev) or prev == 0: return "<div class='kpi-trend-placeholder'>- -</div>"
+            diff_pct = (current - prev) / prev * 100 if prev != 0 else 0
+            is_bad = (kpi_name in ['cpa', 'cost'] and diff_pct > 0) or (kpi_name not in ['cpa', 'cost'] and diff_pct < 0)
+            color = CHART_COLORS['danger'] if is_bad else CHART_COLORS['success']; arrow = "↗" if diff_pct > 0 else "↘"; icon = "📉" if is_bad else "📈"
+            bar_html = f"<div class='progress-container'><div class='progress-bar-bg'><div class='progress-bar-fill' style='width: {min(100, abs(diff_pct) * 1.5)}%; background: linear-gradient(90deg, {color}, {color}80);'></div></div></div>" if vs_text == "KPI 대비" else ""
+            return f"<div class='kpi-trend'><span style='color: {color}; font-weight: 600;'>{icon} {arrow} {abs(diff_pct):.1f}%</span> <div class='vs-text'>vs {vs_text}</div></div>{bar_html}"
+        def format_card(title, value, trend_html="<div class='kpi-trend-placeholder'>- -</div>", icon="📊"):
+            return f"<div class='kpi-card'><div class='kpi-header'><span class='kpi-icon'>{icon}</span><p class='kpi-title'>{title}</p></div><p class='kpi-value'>{value}</p>{trend_html}</div>"
+        cost_trend = get_trend_html(overall['cost'], prev_month_overall['cost'], 'cost', "전달 대비") if prev_month_overall is not None else ""
+        ctr_trend = get_trend_html(overall['ctr'], prev_month_overall['ctr'], 'ctr', "전달 대비") if prev_month_overall is not None else ""
+        cvr_trend = get_trend_html(overall['cvr'], prev_month_overall['cvr'], 'cvr', "전달 대비") if prev_month_overall is not None else ""
+        conv_trend = get_trend_html(overall['conversions'], prev_month_overall['conversions'], 'conversions', "전달 대비") if prev_month_overall is not None else ""
+        roas_trend = get_trend_html(overall['roas'], prev_month_overall['roas'], 'roas', "전달 대비") if prev_month_overall is not None else ""
+        cpa_trend = get_trend_html(overall['cpa'], prev_month_overall['cpa'], 'cpa', "전달 대비") if prev_month_overall is not None else ""
+        if kpi_type == 'roas': roas_trend = get_trend_html(overall['roas'], target_roas, 'roas', "KPI 대비")
+        if kpi_type == 'cpa': cpa_trend = get_trend_html(overall['cpa'], target_cpa, 'cpa', "KPI 대비")
+        cards = [format_card("총 광고비", f"₩{overall['cost']:,.0f}", cost_trend, "💰"), format_card("클릭률 (CTR)", f"{overall['ctr']:.2f}%", ctr_trend, "👆"), format_card("전환율 (CVR)", f"{overall['cvr']:.2f}%", cvr_trend, "🎯"), format_card("총 전환수", f"{overall['conversions']:,.0f}건", conv_trend, "✅"), format_card("ROAS", f"{overall['roas']:.2f}%", roas_trend, "📊"), format_card("CPA", f"₩{overall['cpa']:,.0f}", cpa_trend, "💸")]
+        return f"<div class='kpi-dashboard'><div class='kpi-grid'>{''.join(cards)}</div></div>"
+    except Exception as e:
+        print(f"Error in create_kpi_html: {e}\n{traceback.format_exc()}"); return "<div>KPI 데이터 생성 중 오류 발생</div>"
 
 def get_previous_month_str(month_str):
     try:
@@ -171,20 +146,21 @@ def show_mapping_ui(data_file):
     try:
         df = pd.read_csv(data_file.name, nrows=1, dtype=str) if data_file.name.endswith('.csv') else pd.read_excel(data_file.name, nrows=1, dtype=str)
         headers = df.columns.tolist()
-        auto_map = {'date': next((h for h in headers if '날짜' in h or 'date' in h.lower()), None), 'cost': next((h for h in headers if '비용' in h or 'cost' in h.lower()), None), 'impressions': next((h for h in headers if '노출' in h or 'imp' in h.lower()), None), 'clicks': next((h for h in headers if '클릭' in h or 'click' in h.lower()), None), 'conversions': next((h for h in headers if '전환' in h or 'conv' in h.lower()), None), 'channel': next((h for h in headers if '채널' in h or 'channel' in h.lower()), None), 'revenue': next((h for h in headers if '매출' in h or 'revenue' in h.lower()), None), 'campaign': next((h for h in headers if '캠페인' in h or 'campaign' in h.lower()), None), 'adset': next((h for h in headers if '세트' in h or 'adset' in h.lower()), None), 'creative': next((h for h in headers if '소재' in h or 'creative' in h.lower()), None)}
-        return gr.update(visible=True), gr.update(choices=headers, value=auto_map['date']), gr.update(choices=headers, value=auto_map['cost']), gr.update(choices=headers, value=auto_map['impressions']), gr.update(choices=headers, value=auto_map['clicks']), gr.update(choices=headers, value=auto_map['conversions']), gr.update(choices=headers, value=auto_map['channel']), gr.update(choices=headers, value=auto_map['revenue']), gr.update(choices=headers, value=auto_map['campaign']), gr.update(choices=headers, value=auto_map['adset']), gr.update(choices=headers, value=auto_map['creative']), gr.update(visible=False)
+        auto_map = {'date': next((h for h in headers if '날짜' in h or 'date' in h.lower()), None), 'cost': next((h for h in headers if '비용' in h or 'cost' in h.lower()), None), 'impressions': next((h for h in headers if '노출' in h or 'imp' in h.lower()), None), 'clicks': next((h for h in headers if '클릭' in h or 'click' in h.lower()), None), 'conversions': next((h for h in headers if '전환' in h or 'conv' in h.lower()), None), 'channel': next((h for h in headers if '채널' in h or 'channel' in h.lower()), None), 'revenue': next((h for h in headers if '매출' in h or 'revenue' in h.lower()), None), 'campaign': next((h for h in headers if '캠페인' in h or 'campaign' in h.lower()), None), 'adset': next((h for h in headers if '세트' in h or 'adset' in h.lower()), None)}
+        return gr.update(visible=True), gr.update(choices=headers, value=auto_map['date']), gr.update(choices=headers, value=auto_map['cost']), gr.update(choices=headers, value=auto_map['impressions']), gr.update(choices=headers, value=auto_map['clicks']), gr.update(choices=headers, value=auto_map['conversions']), gr.update(choices=headers, value=auto_map['channel']), gr.update(choices=headers, value=auto_map['revenue']), gr.update(choices=headers, value=auto_map['campaign']), gr.update(choices=headers, value=auto_map['adset']), gr.update(visible=False)
     except Exception as e:
         print(f"Error reading headers: {e}"); return gr.update(visible=False), *(gr.update() for _ in range(8))
 
-def update_dashboard_display(df_full_json, month_filter, channel_filter, kpi_type, target_cpa, target_roas, top_kpi):
-    if df_full_json is None: return [None] * 9
+def update_dashboard_display(df_full_json, month_filter, channel_filter, kpi_type, target_cpa, target_roas):
+    if df_full_json is None: return [None] * 7
     try:
         df_full = pd.read_json(io.StringIO(df_full_json), orient='split'); df_full['date'] = pd.to_datetime(df_full['date'], unit='ms')
         df_current = df_full.copy()
         if month_filter != "전체 월": df_current = df_current[df_current['month'] == month_filter]
         if channel_filter != "전체 매체": df_current = df_current[df_current['channel'] == channel_filter]
+        
         aggregated_current = aggregate_data(df_current)
-        if aggregated_current is None: return [None] * 9
+        if aggregated_current is None: return [None] * 7
         
         prev_month_overall = None; sorted_months = sorted(df_full['month'].unique())
         if month_filter != "전체 월" and month_filter in sorted_months and month_filter != sorted_months[0]:
@@ -199,8 +175,7 @@ def update_dashboard_display(df_full_json, month_filter, channel_filter, kpi_typ
         kpi_html = create_kpi_html(aggregated_current['overall'], kpi_type, target_cpa, target_roas, prev_month_overall)
         summary = f"🎯 총 광고비 ₩{aggregated_current['overall']['cost']:,.0f}으로 {aggregated_current['overall']['conversions']:,.0f}건의 전환을 달성했습니다."
         plot1, plot2, plot3 = create_plots(aggregated_current, kpi_type, target_cpa if kpi_type == 'cpa' else target_roas)
-        top_performers_html = create_top_performers_html(aggregated_current, top_kpi)
-
+        
         wk_cols = ['week_str', 'cost', 'impressions', 'clicks', 'conversions', 'ctr', 'cvr', 'cpa', 'roas']; day_cols = ['date', 'cost', 'impressions', 'clicks', 'conversions', 'ctr', 'cvr', 'cpa', 'roas']
         wk_rename = {'week_str':'주차','cost':'비용','impressions':'노출','clicks':'클릭','conversions':'전환', 'ctr':'CTR(%)', 'cvr':'CVR(%)', 'cpa':'CPA', 'roas':'ROAS(%)'}; day_rename = {'date':'날짜','cost':'비용','impressions':'노출','clicks':'클릭','conversions':'전환', 'ctr':'CTR(%)', 'cvr':'CVR(%)', 'cpa':'CPA', 'roas':'ROAS(%)'}
         by_week_df = aggregated_current['by_week'][wk_cols].rename(columns=wk_rename); by_day_df = aggregated_current['by_day'][day_cols].rename(columns=day_rename)
@@ -216,22 +191,22 @@ def update_dashboard_display(df_full_json, month_filter, channel_filter, kpi_typ
         by_week_df = format_df(by_week_df, ['비용', '노출', '클릭', '전환', 'CPA'], ['CTR(%)', 'CVR(%)', 'ROAS(%)'])
         by_day_df['날짜'] = by_day_df['날짜'].dt.strftime('%Y-%m-%d'); by_day_df = format_df(by_day_df, ['비용', '노출', '클릭', '전환', 'CPA'], ['CTR(%)', 'CVR(%)', 'ROAS(%)'])
         
-        return kpi_html, summary, plot1, plot2, by_week_df, by_day_df, plot3, top_performers_html
+        return kpi_html, summary, plot1, plot2, by_week_df, by_day_df, plot3
     except Exception as e:
-        print(f"Error in update_dashboard_display: {e}\n{traceback.format_exc()}"); return [f"대시보드 업데이트 중 오류: {e}"] + [None] * 7
+        print(f"Error in update_dashboard_display: {e}\n{traceback.format_exc()}"); return [f"대시보드 업데이트 중 오류: {e}"] + [None] * 6
 
-def process_and_init_dashboard(data_file, date_col, cost_col, imp_col, click_col, conv_col, channel_col, rev_col, camp_col, adset_col, creative_col, date_format_code, date_format_custom):
+def process_and_init_dashboard(data_file, date_col, cost_col, imp_col, click_col, conv_col, channel_col, rev_col, camp_col, adset_col, date_format_code, date_format_custom):
     try:
-        mapping_dict = {'date': date_col, 'cost': cost_col, 'impressions': imp_col, 'clicks': click_col, 'conversions': conv_col, 'channel': channel_col, 'revenue': rev_col, 'campaign': camp_col, 'adset': adset_col, 'creative': creative_col}
+        mapping_dict = {'date': date_col, 'cost': cost_col, 'impressions': imp_col, 'clicks': click_col, 'conversions': conv_col, 'channel': channel_col, 'revenue': rev_col, 'campaign': camp_col, 'adset': adset_col}
         if not all(mapping_dict[k] for k in ['date', 'cost', 'impressions', 'clicks', 'conversions', 'channel']): raise gr.Error("필수 컬럼을 모두 지정해야 합니다.")
         df_full = process_data(data_file, mapping_dict, date_format_code, date_format_custom)
         df_full_json = df_full.to_json(orient='split', date_format='iso')
         months = ["전체 월"] + sorted(df_full['month'].unique(), reverse=True)
         channels = ["전체 매체"] + sorted(df_full['channel'].unique())
-        dashboard_updates = update_dashboard_display(df_full_json, "전체 월", "전체 매체", "cpa", 95000, 450, 'roas')
+        dashboard_updates = update_dashboard_display(df_full_json, "전체 월", "전체 매체", "cpa", 95000, 450)
         return df_full_json, gr.update(visible=True), gr.update(choices=months, value="전체 월"), gr.update(choices=channels, value="전체 매체"), *dashboard_updates
     except Exception as e:
-        print(f"Error in process_and_init_dashboard: {e}\n{traceback.format_exc()}"); return None, gr.update(visible=False), gr.update(choices=[]), gr.update(choices=[]), f"처리 중 오류: {e}", *(None for _ in range(8))
+        print(f"Error in process_and_init_dashboard: {e}\n{traceback.format_exc()}"); return None, gr.update(visible=False), gr.update(choices=[]), gr.update(choices=[]), f"처리 중 오류: {e}", *(None for _ in range(7))
 
 # --- CSS 스타일링 ---
 css = """
@@ -262,19 +237,6 @@ body, .gradio-container { font-family: 'Noto Sans KR', sans-serif !important; ba
 .progress-container { width: 100%; height: 1.25rem; display: flex; flex-direction: column; justify-content: flex-end; margin-top: 0.25rem; }
 .progress-bar-bg { background-color: #e5e7eb; border-radius: 9999px; height: 6px; overflow: hidden; }
 .progress-bar-fill { height: 100%; border-radius: 9999px; transition: width 0.3s ease; }
-.top-performers-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 1.5rem; margin-top: 1.5rem; }
-.top-performer-card { background-color: white; border-radius: 12px; padding: 1.5rem; border: 1px solid var(--border-color); box-shadow: var(--shadow-sm); }
-.top-performer-title { font-size: 1.25rem; font-weight: 600; margin-bottom: 1.25rem; }
-.top-performer-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 1.25rem; }
-.top-performer-list li { display: flex; align-items: center; gap: 1rem; }
-.rank { font-size: 1.125rem; font-weight: 600; color: var(--text-secondary); width: 2rem; text-align: center; }
-.item-details { flex-grow: 1; }
-.item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem; }
-.item-name { font-weight: 500; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
-.item-kpi { font-weight: 600; color: var(--primary-color); }
-.item-bar-bg { background-color: #e5e7eb; border-radius: 4px; height: 8px; }
-.item-bar-fill { background-color: var(--primary-color); height: 100%; border-radius: 4px; transition: width 0.3s ease; }
-.item-sub-metric { font-size: 0.8rem; color: var(--text-secondary); text-align: right; margin-top: 0.25rem; }
 """
 
 # --- Gradio UI 구성 ---
@@ -294,7 +256,7 @@ with gr.Blocks(theme=gr.themes.Soft(primary_hue="blue"), css=css, title="광고 
         with gr.Row():
             conv_col = gr.Dropdown(label="전환 컬럼"); channel_col = gr.Dropdown(label="채널 컬럼"); rev_col = gr.Dropdown(label="매출 컬럼 (선택)")
         with gr.Row():
-            camp_col = gr.Dropdown(label="캠페인 컬럼 (선택)"); adset_col = gr.Dropdown(label="광고세트 컬럼 (선택)"); creative_col = gr.Dropdown(label="소재 컬럼 (선택)")
+            camp_col = gr.Dropdown(label="캠페인 컬럼 (선택)"); adset_col = gr.Dropdown(label="광고세트 컬럼 (선택)")
         analyze_button = gr.Button("분석 시작", variant="primary")
 
     with gr.Column(visible=False) as dashboard_group:
@@ -312,28 +274,22 @@ with gr.Blocks(theme=gr.themes.Soft(primary_hue="blue"), css=css, title="광고 
                 plot_weekly = gr.Plot(label="주간 성과 그래프")
             with gr.Row():
                 plot_channel_cost = gr.Plot(label="채널별 비용 비중"); plot_channel_kpi = gr.Plot(label="채널별 KPI 비교")
-            
-            with gr.Group():
-                gr.Markdown("### 🏆 성과 TOP 5 분석")
-                top_kpi_selector = gr.Radio(label="성과 기준 선택", choices=['ROAS', 'CPA (낮은 순)', '전환수', 'CVR (%)', 'CTR (%)'], value='ROAS', interactive=True)
-                top_performers_output = gr.HTML()
-
             with gr.Row():
                 df_weekly = gr.Dataframe(label="주간별 상세 데이터", interactive=False); df_daily = gr.Dataframe(label="일별 상세 데이터", interactive=False)
-                
-    file_input.upload(show_mapping_ui, inputs=file_input, outputs=[mapping_group, date_col, cost_col, imp_col, click_col, conv_col, channel_col, rev_col, camp_col, adset_col, creative_col, dashboard_group])
+
+    file_input.upload(show_mapping_ui, inputs=file_input, outputs=[mapping_group, date_col, cost_col, imp_col, click_col, conv_col, channel_col, rev_col, camp_col, adset_col, dashboard_group])
     def toggle_custom_format(choice): return gr.update(visible=(choice == "custom"))
     date_format_selector.change(toggle_custom_format, inputs=date_format_selector, outputs=date_format_custom)
 
-    dashboard_components = [kpi_output_md, summary_output, plot_weekly, plot_channel_cost, df_weekly, df_daily, plot_channel_kpi, top_performers_output]
+    dashboard_components = [kpi_output_md, summary_output, plot_weekly, plot_channel_cost, df_weekly, df_daily, plot_channel_kpi]
     
     analyze_button.click(
         fn=process_and_init_dashboard, 
-        inputs=[file_input, date_col, cost_col, imp_col, click_col, conv_col, channel_col, rev_col, camp_col, adset_col, creative_col, date_format_selector, date_format_custom], 
+        inputs=[file_input, date_col, cost_col, imp_col, click_col, conv_col, channel_col, rev_col, camp_col, adset_col, date_format_selector, date_format_custom], 
         outputs=[df_state, dashboard_group, month_filter, channel_filter] + dashboard_components
     )
     
-    filter_inputs = [df_state, month_filter, channel_filter, kpi_type, target_cpa, target_roas, top_kpi_selector]
+    filter_inputs = [df_state, month_filter, channel_filter, kpi_type, target_cpa, target_roas]
     for comp in filter_inputs:
         comp.change(fn=update_dashboard_display, inputs=filter_inputs, outputs=dashboard_components)
 
