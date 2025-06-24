@@ -110,7 +110,12 @@ def create_plots(aggregated_data, kpi_type, target_value):
         fig1 = make_subplots(specs=[[{"secondary_y": True}]])
         fig1.add_trace(go.Bar(x=by_week['week_str'], y=by_week['cost'], name='광고비', marker_color=CHART_COLORS['primary'], opacity=0.8, hovertemplate='<b>%{x}</b><br>광고비: ₩%{y:,.0f}<extra></extra>'), secondary_y=False)
         fig1.add_trace(go.Scatter(x=by_week['week_str'], y=by_week[kpi_type], name=kpi_type.upper(), mode='lines+markers', line=dict(color=CHART_COLORS['secondary'], width=3), marker=dict(size=8, color=CHART_COLORS['secondary']), hovertemplate=f'<b>%{{x}}</b><br>{kpi_type.upper()}: %{{y:.2f}}<extra></extra>'), secondary_y=True)
-        fig1.update_layout(title_text="📈 주간 성과 트렌드", **PLOTLY_THEME['layout']); fig1.update_yaxes(title_text="광고비 (₩)", secondary_y=False); fig1.update_yaxes(title_text=f"{kpi_type.upper()}", secondary_y=True)
+        
+        # 병합된 레이아웃 업데이트
+        layout1 = PLOTLY_THEME['layout'].copy()
+        layout1['title'] = {'text': "📈 주간 성과 트렌드", **PLOTLY_THEME['layout']['title']}
+        fig1.update_layout(**layout1)
+        fig1.update_yaxes(title_text="광고비 (₩)", secondary_y=False); fig1.update_yaxes(title_text=f"{kpi_type.upper()}", secondary_y=True)
 
         fig2 = px.pie(by_channel, values='cost', names='channel', title='💰 채널별 비용 비중', hole=0.4, color_discrete_sequence=px.colors.qualitative.Set3)
         fig2.update_traces(textposition='inside', textinfo='percent+label', hovertemplate='<b>%{label}</b><br>비용: ₩%{value:,.0f}<br>비중: %{percent}<extra></extra>')
@@ -119,7 +124,11 @@ def create_plots(aggregated_data, kpi_type, target_value):
         colors = [CHART_COLORS['danger'] if (kpi_type == 'cpa' and c > target_value and target_value > 0) or (kpi_type == 'roas' and c < target_value and target_value > 0) else CHART_COLORS['success'] for c in by_channel[kpi_type]]
         fig3 = px.bar(by_channel.sort_values(by=kpi_type, ascending=(kpi_type=='cpa')), x=kpi_type, y='channel', orientation='h', title=f'🎯 채널별 {kpi_type.upper()} 비교', text=kpi_type)
         fig3.update_traces(marker_color=colors, texttemplate='%{text:,.0f}' if kpi_type == 'cpa' else '%{text:.1f}%', textposition='outside', hovertemplate=f'<b>%{{y}}</b><br>{kpi_type.upper()}: %{{x:.2f}}<extra></extra>')
-        fig3.update_layout(**PLOTLY_THEME['layout'], yaxis={'categoryorder': 'total ascending' if kpi_type == 'roas' else 'total descending'})
+        
+        layout3 = PLOTLY_THEME['layout'].copy()
+        layout3['yaxis'] = {'categoryorder': 'total ascending' if kpi_type == 'roas' else 'total descending', **PLOTLY_THEME['layout']['yaxis']}
+        fig3.update_layout(**layout3)
+        
         return fig1, fig2, fig3
     except Exception as e:
         print(f"Error in create_plots: {e}\n{traceback.format_exc()}")
@@ -179,12 +188,13 @@ def update_dashboard_display(df_full_json, month_filter, channel_filter, kpi_typ
     if df_full_json is None: return [None] * 8
     try:
         df_full = pd.read_json(io.StringIO(df_full_json), orient='split'); df_full['date'] = pd.to_datetime(df_full['date'], unit='ms')
+        
         df_current = df_full.copy()
         if month_filter != "전체 월": df_current = df_current[df_current['month'] == month_filter]
         if channel_filter != "전체 매체": df_current = df_current[df_current['channel'] == channel_filter]
         
         aggregated_current = aggregate_data(df_current)
-        if not aggregated_current: return [None] * 8
+        if aggregated_current is None: return [None] * 8
         
         prev_month_overall = None
         sorted_months = sorted(df_full['month'].unique())
