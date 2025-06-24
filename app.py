@@ -175,17 +175,46 @@ def get_previous_month_str(month_str):
 
 # --- Gradio 상호작용 함수들 ---
 def show_mapping_ui(data_file):
-    if data_file is None: return gr.update(visible=False), *(gr.update() for _ in range(8))
+    if data_file is None:
+        return gr.update(visible=False), *(gr.update() for _ in range(12))
     try:
         df = pd.read_csv(data_file.name, nrows=1, dtype=str) if data_file.name.endswith('.csv') else pd.read_excel(data_file.name, nrows=1, dtype=str)
         headers = df.columns.tolist()
-        auto_map = {'date': next((h for h in headers if '날짜' in h or 'date' in h.lower()), None), 'cost': next((h for h in headers if '비용' in h or 'cost' in h.lower()), None), 'impressions': next((h for h in headers if '노출' in h or 'imp' in h.lower()), None), 'clicks': next((h for h in headers if '클릭' in h or 'click' in h.lower()), None), 'conversions': next((h for h in headers if '전환' in h or 'conv' in h.lower()), None), 'channel': next((h for h in headers if '채널' in h or 'channel' in h.lower()), None), 'revenue': next((h for h in headers if '매출' in h or 'revenue' in h.lower()), None)}
-        return gr.update(visible=True), gr.update(choices=headers, value=auto_map['date']), gr.update(choices=headers, value=auto_map['cost']), gr.update(choices=headers, value=auto_map['impressions']), gr.update(choices=headers, value=auto_map['clicks']), gr.update(choices=headers, value=auto_map['conversions']), gr.update(choices=headers, value=auto_map['channel']), gr.update(choices=headers, value=auto_map['revenue']), gr.update(visible=False)
+        auto_map = {
+            'date': next((h for h in headers if '날짜' in h or 'date' in h.lower()), None),
+            'cost': next((h for h in headers if '비용' in h or 'cost' in h.lower()), None),
+            'impressions': next((h for h in headers if '노출' in h or 'imp' in h.lower()), None),
+            'clicks': next((h for h in headers if '클릭' in h or 'click' in h.lower()), None),
+            'conversions': next((h for h in headers if '전환' in h or 'conv' in h.lower()), None),
+            'channel': next((h for h in headers if '채널' in h or 'channel' in h.lower()), None),
+            'revenue': next((h for h in headers if '매출' in h or 'revenue' in h.lower()), None),
+            'campaign': next((h for h in headers if '캠페인' in h or 'campaign' in h.lower()), None),
+            'adset': next((h for h in headers if '세트' in h or 'adset' in h.lower()), None),
+            'creative': next((h for h in headers if '소재' in h or 'creative' in h.lower()), None),
+            'placement': next((h for h in headers if '위치' in h or 'placement' in h.lower()), None),
+        }
+        return (
+            gr.update(visible=True),
+            gr.update(choices=headers, value=auto_map['date']),
+            gr.update(choices=headers, value=auto_map['cost']),
+            gr.update(choices=headers, value=auto_map['impressions']),
+            gr.update(choices=headers, value=auto_map['clicks']),
+            gr.update(choices=headers, value=auto_map['conversions']),
+            gr.update(choices=headers, value=auto_map['channel']),
+            gr.update(choices=headers, value=auto_map['revenue']),
+            gr.update(choices=headers, value=auto_map['campaign']),
+            gr.update(choices=headers, value=auto_map['adset']),
+            gr.update(choices=headers, value=auto_map['creative']),
+            gr.update(choices=headers, value=auto_map['placement']),
+            gr.update(visible=False),
+        )
     except Exception as e:
-        print(f"Error reading headers: {e}"); return gr.update(visible=False), *(gr.update() for _ in range(8))
+        print(f"Error reading headers: {e}")
+        return gr.update(visible=False), *(gr.update() for _ in range(12))
 
 def update_dashboard_display(df_full_json, month_filter, channel_filter, kpi_type, target_cpa, target_roas):
-    if df_full_json is None: return [None] * 8
+    if df_full_json is None:
+        return [None] * 11
     try:
         df_full = pd.read_json(io.StringIO(df_full_json), orient='split'); df_full['date'] = pd.to_datetime(df_full['date'], unit='ms')
         
@@ -194,7 +223,8 @@ def update_dashboard_display(df_full_json, month_filter, channel_filter, kpi_typ
         if channel_filter != "전체 매체": df_current = df_current[df_current['channel'] == channel_filter]
         
         aggregated_current = aggregate_data(df_current)
-        if aggregated_current is None: return [None] * 8
+        if aggregated_current is None:
+            return [None] * 11
         
         prev_month_overall = None
         sorted_months = sorted(df_full['month'].unique())
@@ -209,13 +239,48 @@ def update_dashboard_display(df_full_json, month_filter, channel_filter, kpi_typ
 
         kpi_html = create_kpi_html(aggregated_current['overall'], kpi_type, target_cpa, target_roas, prev_month_overall)
         summary = f"🎯 총 광고비 ₩{aggregated_current['overall']['cost']:,.0f}으로 {aggregated_current['overall']['conversions']:,.0f}건의 전환을 달성했습니다."
-        plot1, plot2, plot3 = create_plots(aggregated_current, kpi_type, target_cpa if kpi_type == 'cpa' else target_roas)
+        if prev_month_overall is not None:
+            cost_diff = aggregated_current['overall']['cost'] - prev_month_overall['cost']
+            cost_pct = cost_diff / prev_month_overall['cost'] * 100 if prev_month_overall['cost'] else 0
+            roas_diff = aggregated_current['overall']['roas'] - prev_month_overall['roas']
+            roas_pct = roas_diff / prev_month_overall['roas'] * 100 if prev_month_overall['roas'] else 0
+            summary += f" 지난달 대비 비용 {cost_pct:+.1f}%, ROAS {roas_pct:+.1f}% 변화가 있었습니다."
+        if aggregated_current.get('by_campaign') is not None and not aggregated_current['by_campaign'].empty:
+            top_campaign = aggregated_current['by_campaign'].sort_values('conversions', ascending=False).iloc[0]['campaign']
+            summary += f" 특히 '{top_campaign}' 캠페인이 성과를 견인했습니다."
+        plot1, plot2, plot3, plot4 = create_plots(
+            aggregated_current,
+            kpi_type,
+            target_cpa if kpi_type == 'cpa' else target_roas,
+        )
         
         wk_cols = ['week_str', 'cost', 'impressions', 'clicks', 'conversions', 'ctr', 'cvr', 'cpa', 'roas']; day_cols = ['date', 'cost', 'impressions', 'clicks', 'conversions', 'ctr', 'cvr', 'cpa', 'roas']
         wk_rename = {'week_str':'주차','cost':'비용','impressions':'노출','clicks':'클릭','conversions':'전환', 'ctr':'CTR(%)', 'cvr':'CVR(%)', 'cpa':'CPA', 'roas':'ROAS(%)'}; day_rename = {'date':'날짜','cost':'비용','impressions':'노출','clicks':'클릭','conversions':'전환', 'ctr':'CTR(%)', 'cvr':'CVR(%)', 'cpa':'CPA', 'roas':'ROAS(%)'}
         
         by_week_df = aggregated_current['by_week'][wk_cols].rename(columns=wk_rename)
         by_day_df = aggregated_current['by_day'][day_cols].rename(columns=day_rename)
+
+        camp_df = None
+        adset_df = None
+        creative_df = None
+        if aggregated_current.get('by_campaign') is not None:
+            camp_df = aggregated_current['by_campaign'][['campaign', 'cost', 'conversions', 'roas']].copy()
+            camp_df.rename(columns={'campaign': '캠페인', 'cost': '비용', 'conversions': '전환', 'roas': 'ROAS(%)'}, inplace=True)
+            camp_df['비용'] = camp_df['비용'].apply(lambda x: f"{x:,.0f}")
+            camp_df['전환'] = camp_df['전환'].apply(lambda x: f"{x:,.0f}")
+            camp_df['ROAS(%)'] = camp_df['ROAS(%)'].apply(lambda x: f"{x:.2f}")
+        if aggregated_current.get('by_adset') is not None:
+            adset_df = aggregated_current['by_adset'][['adset', 'cost', 'conversions', 'roas']].copy()
+            adset_df.rename(columns={'adset': '광고세트', 'cost': '비용', 'conversions': '전환', 'roas': 'ROAS(%)'}, inplace=True)
+            adset_df['비용'] = adset_df['비용'].apply(lambda x: f"{x:,.0f}")
+            adset_df['전환'] = adset_df['전환'].apply(lambda x: f"{x:,.0f}")
+            adset_df['ROAS(%)'] = adset_df['ROAS(%)'].apply(lambda x: f"{x:.2f}")
+        if aggregated_current.get('by_creative') is not None:
+            creative_df = aggregated_current['by_creative'][['creative', 'cost', 'conversions', 'roas']].copy()
+            creative_df.rename(columns={'creative': '소재', 'cost': '비용', 'conversions': '전환', 'roas': 'ROAS(%)'}, inplace=True)
+            creative_df['비용'] = creative_df['비용'].apply(lambda x: f"{x:,.0f}")
+            creative_df['전환'] = creative_df['전환'].apply(lambda x: f"{x:,.0f}")
+            creative_df['ROAS(%)'] = creative_df['ROAS(%)'].apply(lambda x: f"{x:.2f}")
         
         for col in ['비용', '노출', '클릭', '전환', 'CPA']:
             by_week_df[col] = by_week_df[col].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else '0')
@@ -224,15 +289,56 @@ def update_dashboard_display(df_full_json, month_filter, channel_filter, kpi_typ
             by_week_df[col] = by_week_df[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else '0.00')
             by_day_df[col] = by_day_df[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else '0.00')
         by_day_df['날짜'] = by_day_df['날짜'].dt.strftime('%Y-%m-%d')
-        return kpi_html, summary, plot1, plot2, by_week_df, by_day_df, plot3
+
+        return (
+            kpi_html,
+            summary,
+            plot1,
+            plot2,
+            plot4,
+            by_week_df,
+            by_day_df,
+            plot3,
+            camp_df,
+            adset_df,
+            creative_df,
+        )
     except Exception as e:
         print(f"Error in update_dashboard_display: {e}\n{traceback.format_exc()}")
-        return [f"대시보드 업데이트 중 오류: {e}"] + [None] * 7
+        return [f"대시보드 업데이트 중 오류: {e}"] + [None] * 10
 
-def process_and_init_dashboard(data_file, date_col, cost_col, imp_col, click_col, conv_col, channel_col, rev_col, date_format_code, date_format_custom):
+def process_and_init_dashboard(
+    data_file,
+    date_col,
+    cost_col,
+    imp_col,
+    click_col,
+    conv_col,
+    channel_col,
+    rev_col,
+    camp_col,
+    adset_col,
+    creative_col,
+    place_col,
+    date_format_code,
+    date_format_custom,
+):
     try:
-        mapping_dict = {'date': date_col, 'cost': cost_col, 'impressions': imp_col, 'clicks': click_col, 'conversions': conv_col, 'channel': channel_col, 'revenue': rev_col}
-        if not all(mapping_dict[k] for k in ['date', 'cost', 'impressions', 'clicks', 'conversions', 'channel']): raise gr.Error("필수 컬럼을 모두 지정해야 합니다.")
+        mapping_dict = {
+            'date': date_col,
+            'cost': cost_col,
+            'impressions': imp_col,
+            'clicks': click_col,
+            'conversions': conv_col,
+            'channel': channel_col,
+            'revenue': rev_col,
+            'campaign': camp_col,
+            'adset': adset_col,
+            'creative': creative_col,
+            'placement': place_col,
+        }
+        if not all(mapping_dict[k] for k in ['date', 'cost', 'impressions', 'clicks', 'conversions', 'channel']):
+            raise gr.Error("필수 컬럼을 모두 지정해야 합니다.")
         df_full = process_data(data_file, mapping_dict, date_format_code, date_format_custom)
         df_full_json = df_full.to_json(orient='split', date_format='iso')
         months = ["전체 월"] + sorted(df_full['month'].unique(), reverse=True)
@@ -241,7 +347,7 @@ def process_and_init_dashboard(data_file, date_col, cost_col, imp_col, click_col
         return df_full_json, gr.update(visible=True), gr.update(choices=months, value="전체 월"), gr.update(choices=channels, value="전체 매체"), *dashboard_updates
     except Exception as e:
         print(f"Error in process_and_init_dashboard: {e}\n{traceback.format_exc()}")
-        return None, gr.update(visible=False), gr.update(choices=[]), gr.update(choices=[]), f"처리 중 오류: {e}", *(None for _ in range(7))
+        return None, gr.update(visible=False), gr.update(choices=[]), gr.update(choices=[]), f"처리 중 오류: {e}", *(None for _ in range(11))
 
 # --- CSS 스타일링 ---
 css = """
@@ -312,20 +418,73 @@ with gr.Blocks(theme=gr.themes.Soft(primary_hue="blue"), css=css, title="광고 
             with gr.Row():
                 plot_weekly = gr.Plot(label="주간 성과 그래프")
             with gr.Row():
-                plot_channel_cost = gr.Plot(label="채널별 비용 비중"); plot_channel_kpi = gr.Plot(label="채널별 KPI 비교")
+                plot_channel_cost = gr.Plot(label="채널별 비용 비중")
+                plot_channel_kpi = gr.Plot(label="채널별 KPI 비교")
             with gr.Row():
-                df_weekly = gr.Dataframe(label="주간별 상세 데이터", interactive=False); df_daily = gr.Dataframe(label="일별 상세 데이터", interactive=False)
+                df_weekly = gr.Dataframe(label="주간별 상세 데이터", interactive=False)
+                df_daily = gr.Dataframe(label="일별 상세 데이터", interactive=False)
+            with gr.Row():
+                treemap_plot = gr.Plot(label="캠페인 트리맵")
+            with gr.Row():
+                df_campaign = gr.Dataframe(label="캠페인별 성과", interactive=False)
+                df_adset = gr.Dataframe(label="광고세트별 성과", interactive=False)
+                df_creative = gr.Dataframe(label="소재별 성과", interactive=False)
 
-    file_input.upload(show_mapping_ui, inputs=file_input, outputs=[mapping_group, date_col, cost_col, imp_col, click_col, conv_col, channel_col, rev_col, dashboard_group])
+    file_input.upload(
+        show_mapping_ui,
+        inputs=file_input,
+        outputs=[
+            mapping_group,
+            date_col,
+            cost_col,
+            imp_col,
+            click_col,
+            conv_col,
+            channel_col,
+            rev_col,
+            camp_col,
+            adset_col,
+            creative_col,
+            place_col,
+            dashboard_group,
+        ],
+    )
     def toggle_custom_format(choice): return gr.update(visible=(choice == "custom"))
     date_format_selector.change(toggle_custom_format, inputs=date_format_selector, outputs=date_format_custom)
 
-    dashboard_components = [kpi_output_md, summary_output, plot_weekly, plot_channel_cost, df_weekly, df_daily, plot_channel_kpi]
+    dashboard_components = [
+        kpi_output_md,
+        summary_output,
+        plot_weekly,
+        plot_channel_cost,
+        treemap_plot,
+        df_weekly,
+        df_daily,
+        plot_channel_kpi,
+        df_campaign,
+        df_adset,
+        df_creative,
+    ]
     
     analyze_button.click(
-        fn=process_and_init_dashboard, 
-        inputs=[file_input, date_col, cost_col, imp_col, click_col, conv_col, channel_col, rev_col, date_format_selector, date_format_custom], 
-        outputs=[df_state, dashboard_group, month_filter, channel_filter] + dashboard_components
+        fn=process_and_init_dashboard,
+        inputs=[
+            file_input,
+            date_col,
+            cost_col,
+            imp_col,
+            click_col,
+            conv_col,
+            channel_col,
+            rev_col,
+            camp_col,
+            adset_col,
+            creative_col,
+            place_col,
+            date_format_selector,
+            date_format_custom,
+        ],
+        outputs=[df_state, dashboard_group, month_filter, channel_filter] + dashboard_components,
     )
     
     filter_inputs = [df_state, month_filter, channel_filter, kpi_type, target_cpa, target_roas]
