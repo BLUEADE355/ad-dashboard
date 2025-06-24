@@ -154,7 +154,8 @@ def show_mapping_ui(data_file):
 def update_dashboard_display(df_full_json, month_filter, channel_filter, kpi_type, target_cpa, target_roas):
     if df_full_json is None: return [None] * 7
     try:
-        df_full = pd.read_json(io.StringIO(df_full_json), orient='split'); df_full['date'] = pd.to_datetime(df_full['date'], unit='ms')
+        df_full = pd.read_json(io.StringIO(df_full_json), orient='split')
+        df_full['date'] = pd.to_datetime(df_full['date'])
         df_current = df_full.copy()
         if month_filter != "전체 월": df_current = df_current[df_current['month'] == month_filter]
         if channel_filter != "전체 매체": df_current = df_current[df_current['channel'] == channel_filter]
